@@ -1,6 +1,6 @@
 /*
  * @Date: 2021-10-09 08:57:47
- * @LastEditTime: 2021-10-09 13:27:48
+ * @LastEditTime: 2021-10-09 14:23:50
  * @Description: Proxy
  * @FilePath: /CS3103Proxy/proxy.c
  */
@@ -13,7 +13,7 @@
 #include <string.h>
 
 int main(int argc, char *argv[]){
-    if (argc < 4) {
+    if (argc != 4) {
         fprintf(stderr, "Usage: %s <port> <flag_telemetry> <filename of blacklist>\n", argv[0]); // stdio.h
         exit(EXIT_FAILURE); // stdlib.h
     }
