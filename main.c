@@ -205,6 +205,23 @@ void proxy_https(int client, char* method, char* host, char* protocol, char* hea
     }
 }
 
+int check_blacklist(char *b_list_path, char *url) {
+    FILE *blacklist_file = fopen(*b_list_path, "r");
+    if(blacklist_file == NULL) 
+        return 0;
+    char input_url[10000];
+    input_url = fscanf(*b_list_path);
+    while (input_url != EOF) {
+        char *cmp;
+        cmp = strstr(url, input_url);
+        if (cmp) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+}
+
 void *process_request(void * _client_sock) {
     int client_sock = (int) (long) _client_sock;
 
@@ -226,6 +243,12 @@ void *process_request(void * _client_sock) {
     // Null URL
     if (url[0] == '\0') {
         raise_error(client_sock, 400, "Bad Request");
+        return NULL;
+    }
+
+    //Check for blacklisted URL
+    if (check_blacklist(char *b_list_path, char url) == 1) {
+        raise_error(client_sock, 403, "Blacklisted URL");
         return NULL;
     }
 
