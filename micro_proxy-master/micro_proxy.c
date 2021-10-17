@@ -534,6 +534,10 @@ void *accept_request(void *_client)
     }
 
     close(client);
+
+    //Debug
+    printf("REquest process ends!\n");
+
     return NULL;
 }
 
@@ -675,6 +679,10 @@ int main(int argc, const char **argv)
         if (client_sock == -1)
             error_die("accept");
         /* accept_request(client_sock); */
+
+        //Debug
+        printf("Pthread created!\n");
+        
         if (pthread_create(&newthread , NULL, &accept_request, (void *)(long)client_sock) != 0)
             perror("pthread_create");
     }

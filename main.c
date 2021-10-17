@@ -13,12 +13,54 @@
 #include <string.h>
 #include <time.h>
 #include <netdb.h>
-#include <sys/time.h> 
+#include <sys/time.h>
+#include <pthread.h>
 
-
-#define PROTOCOL "HTTP/1.0"
+#define HTTP10 "HTTP/1.0"
 #define RFC1123FMT "%a, %d, %b, %Y, %H:%M:%S GMT"
 #define TIMEOUT 300
+
+int client_sock_stack[10000];
+int client_sock_top = -1;
+
+pthread_t threadpool[8];
+pthread_mutex_t client_sock_stack_lock;
+pthread_cond_t client_sock_stack_empty;
+
+void send_headers(int client, int status, char *title, char *extra_header, char *content_type, int length, char *protocol) {
+    char buffer[10000];
+
+    // (HTTP/1.x) (200) (OK)
+    snprintf(buffer, sizeof(buffer), "%s %d %s\r\n", protocol, status, title);
+    send(client, buffer, strlen(buffer), 0);
+
+    // Date
+    time_t now = time((time_t*) 0);
+    char time_buffer[100];
+    strftime(time_buffer, sizeof(time_buffer), RFC1123FMT, gmtime(&now));
+    snprintf(buffer, sizeof(buffer), "Date: %s\r\n", time_buffer);
+    send(client, buffer, strlen(buffer), 0);
+
+    // Context-Type
+    if (content_type != (char *) 0) {
+        snprintf(buffer, sizeof(buffer), "Content-Type: %s\r\n", content_type);
+        send(client, buffer, strlen(buffer), 0);
+    }
+
+    // Content-Length
+    if (length >= 0) {
+        snprintf(buffer, sizeof(buffer), "Content-Length: %d\r\n", length);
+        send(client, buffer, strlen(buffer), 0);
+    }
+
+    // \r\n END
+    snprintf(buffer, sizeof(buffer), "\r\n");
+    send(client, buffer, strlen(buffer), 0);
+}
+
+void raise_error(int client, int status, char *title, char *protocol){
+    send_headers(client, status, title, (char *) 0, (char *) 0, -1, protocol);
+}
 
 int init_server_socket(int port) {  // TODO: Only IPv4 at present
     struct sockaddr_in Saddress; // IPv4 Address netinet/in.h
@@ -56,7 +98,7 @@ int init_server_socket(int port) {  // TODO: Only IPv4 at present
     return sockfd;
 }
 
-int init_client_socket(int client_sock, char* host, int port) {
+int init_client_socket(int client_sock, char* host, int port, char *protocol) {
     
     struct sockaddr_in TAddress; // Target IPv4 address
 
@@ -64,7 +106,7 @@ int init_client_socket(int client_sock, char* host, int port) {
 
     if (sockfd < 0) {
         // Target Socket Creation Failed
-        raise_error(client_sock, 500, "Internal Error");
+        raise_error(client_sock, 500, "Internal Error", protocol);
 
         perror("Target Socket creation failed.");
         return -1;
@@ -74,7 +116,7 @@ int init_client_socket(int client_sock, char* host, int port) {
 
     if ((he = gethostbyname(host)) == NULL) {
         // Unknown host
-        raise_error(client_sock, 404, "Not Found");
+        raise_error(client_sock, 404, "Not Found", protocol);
 
         perror("Unknown target host.");
         return -1;
@@ -87,48 +129,13 @@ int init_client_socket(int client_sock, char* host, int port) {
 
     if (connect(sockfd, (struct sockaddr*) &TAddress, sizeof(TAddress)) < 0) {
         //Target connection failed
-        raise_error(client_sock, 503, "Service Unavailable");
+        raise_error(client_sock, 503, "Service Unavailable", protocol);
 
         perror("Target connection failed.");
         return -1;
     }
 
     return sockfd;
-}
-
-void send_headers(int client, int status, char *title, char *extra_header, char *content_type, int length) {
-    char buffer[10000];
-
-    // (HTTP/1.x) (200) (OK)
-    snprintf(buffer, sizeof(buffer), "%s %d %s\r\n", PROTOCOL, status, title);
-    send(client, buffer, strlen(buffer), 0);
-
-    // Date
-    time_t now = time((time_t*) 0);
-    char time_buffer[100];
-    strftime(time_buffer, sizeof(time_buffer), RFC1123FMT, gmtime(&now));
-    snprintf(buffer, sizeof(buffer), "Date: %s\r\n", time_buffer);
-    send(client, buffer, strlen(buffer), 0);
-
-    // Context-Type
-    if (content_type != (char *) 0) {
-        snprintf(buffer, sizeof(buffer), "Content-Type: %s\r\n", content_type);
-        send(client, buffer, strlen(buffer), 0);
-    }
-
-    // Content-Length
-    if (length >= 0) {
-        snprintf(buffer, sizeof(buffer), "Content-Length: %d\r\n", length);
-        send(client, buffer, strlen(buffer), 0);
-    }
-
-    // \r\n END
-    snprintf(buffer, sizeof(buffer), "\r\n");
-    send(client, buffer, strlen(buffer), 0);
-}
-
-void raise_error(int client, int status, char *title){
-    send_headers(client, status, title, (char *) 0, (char *) 0, -1);
 }
 
 /*it will discard the "\\r\\n" at the end of each line*/
@@ -156,7 +163,10 @@ int read_request_line(int sock, char *buffer, int buf_size) {
 
 void proxy_https(int client, char* method, char* host, char* protocol, char* headers, FILE* sockrfp, FILE* sockwfp) {
     //HTTP/1.x 200 Connection established\r\n\r\n
-    char *connection_established = "HTTP/1.0 200 Connection established\r\n\r\n";
+    char connection_established[100];
+
+    snprintf(connection_established, sizeof(connection_established), "%s 200 Connection established\r\n\r\n", protocol);
+    
     send(client, connection_established, strlen(connection_established), 0);
 
     int client_read_fd, server_read_fd, client_write_fd, server_write_fd;
@@ -188,7 +198,7 @@ void proxy_https(int client, char* method, char* host, char* protocol, char* hea
         r = select(maxfd, &fdset, (fd_set*) 0, (fd_set*) 0, &timeout);
 
         if (r == 0) {
-            raise_error(client, 408, "Request Timeout");
+            raise_error(client, 408, "Request Timeout", protocol);
             return;
         } else if (FD_ISSET(client_read_fd, &fdset)) {
             r = read(client_read_fd, buffer, sizeof(buffer));
@@ -200,9 +210,19 @@ void proxy_https(int client, char* method, char* host, char* protocol, char* hea
                 break;
             }
         } else if (FD_ISSET(server_write_fd, &fdset)) {
-            
+            r = read(server_read_fd, buffer, sizeof(buffer));
+            if (r <= 0) {
+                break;
+            }
+            r = write(client_write_fd, buffer, r);
+            if (r <= 0) {
+                break;
+            }
         }
     }
+
+    //Debug
+    printf("https ends\n");
 }
 
 void *process_request(void * _client_sock) {
@@ -217,15 +237,16 @@ void *process_request(void * _client_sock) {
 
     //Parse the first line
     int line_len = read_request_line(client_sock, line, sizeof(line));
+
     // Wrong format
     if (sscanf(line, "%[^ ] %[^ ] %[^ ]", method, url, protocol) != 3) {
-        raise_error(client_sock, 400, "Bad Request");
+        raise_error(client_sock, 400, "Bad Request", HTTP10);
         return NULL;
     }
 
     // Null URL
     if (url[0] == '\0') {
-        raise_error(client_sock, 400, "Bad Request");
+        raise_error(client_sock, 400, "Bad Request", protocol);
         return NULL;
     }
 
@@ -235,12 +256,12 @@ void *process_request(void * _client_sock) {
     if (strcmp(method, "CONNECT") == 0) {
         // URL without :port
         if (sscanf(url, "%[^:]:%d", host, &port) != 2) {
-            raise_error(client_sock, 400, "Bad Request");
+            raise_error(client_sock, 400, "Bad Request", protocol);
             return NULL;
         } 
     } else {
         // Unknown method (NOT CONNECT)
-        raise_error(client_sock, 400, "Bad Request");
+        raise_error(client_sock, 400, "Bad Request", protocol);
         return NULL;
     }
 
@@ -254,11 +275,13 @@ void *process_request(void * _client_sock) {
     }
     headers[headers_len] = '\0';
 
-    int target_sock = open_client_socket(client_sock, host, port);
+    int target_sock = init_client_socket(client_sock, host, port, protocol);
 
     if (target_sock >= 0) {
         FILE* sockrfp;
         FILE* sockwfp;
+        sockrfp = fdopen(target_sock, "r");
+        sockwfp = fdopen(target_sock, "w");
         
         proxy_https(client_sock, method, host, protocol, headers, sockrfp, sockwfp);
 
@@ -267,6 +290,29 @@ void *process_request(void * _client_sock) {
 
     close(client_sock);
     return NULL;
+}
+
+void *thread_control(void *arg) {
+    int index = (int) (long) arg;
+
+    while (1) {
+        int client_sock;
+        pthread_mutex_lock(&client_sock_stack_lock);
+        while (client_sock_top == -1) {
+            pthread_cond_wait(&client_sock_stack_empty, &client_sock_stack_lock);
+        }
+        client_sock = client_sock_stack[client_sock_top];
+        client_sock_top -= 1;
+        pthread_mutex_unlock(&client_sock_stack_lock);
+
+        //Debug
+        printf("Thread %d processing request!\nStack_top = %d\n", index, client_sock_top);
+
+        process_request((void *) (long) client_sock); // Void Pointer <== Long (same-size) <== Int
+    
+        //Debug
+        printf("Thread %d completed!\n", index);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -279,9 +325,6 @@ int main(int argc, char *argv[]) {
     int flag_telemetry = atoi(argv[2]);
     char *b_list_path = argv[3];
 
-    // Debug input
-    // printf("%d\n%d\n%s\n", port, flag_telemetry, b_list_path);
-
     int server_sock = init_server_socket(port);
     printf(";) HTTPS Proxy running on port %d!\n", port);
 
@@ -289,22 +332,34 @@ int main(int argc, char *argv[]) {
     socklen_t clen = sizeof(Caddress);
     int client_sock;
 
+    pthread_mutex_init(&client_sock_stack_lock, NULL);
+    pthread_cond_init(&client_sock_stack_empty, NULL);
+
+    for (int i = 0; i < 8; i++) {
+        pthread_create(&threadpool[i], NULL, &thread_control,(void *) (long) i);
+    }
+
     while (1) {
         if ((client_sock = accept(server_sock, (struct sockaddr_in *) &Caddress, &clen)) < 0) {
-            perror("Accept failed.");
+            perror("Accept failed.\n");
             exit(EXIT_FAILURE);
         }
 
-        int valread;
-        int buffer_size = 1024; // Buffer size;
-        char buffer[buffer_size];
-        
-        // Debug Listen Value
-        // valread = read(client_sock, buffer, sizeof(buffer)); // unistd.h
-        // printf("%s\n", buffer);
-
-        process_request((void *) (long) client_sock); // Void Pointer <== Long (same-size) <== Int
+        pthread_mutex_lock(&client_sock_stack_lock);
+        client_sock_top += 1;
+        client_sock_stack[client_sock_top] = client_sock;
+        if (client_sock_top == 0) {
+            pthread_cond_signal(&client_sock_stack_empty);
+        }
+        pthread_mutex_unlock(&client_sock_stack_lock);
     }
+
+    for (int i = 0; i < 8; i++) {
+        pthread_join(threadpool[i], NULL);
+    }
+
+    pthread_mutex_destroy(&client_sock_stack_lock);
+    pthread_cond_destroy(&client_sock_stack_empty);
 
     close(server_sock);
     
