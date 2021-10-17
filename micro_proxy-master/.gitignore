@@ -1,0 +1,4 @@
+/micro_proxy
+*.o
+*.rb
+/micro_proxy.dSYM

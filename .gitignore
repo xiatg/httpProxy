@@ -1,3 +1,5 @@
 
 proxy
 trashed/
+.vscode/settings.json
+.DS_Store
