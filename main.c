@@ -517,7 +517,7 @@ int main(int argc, char *argv[]) {
     }
 
     while (1) {
-        if ((client_sock = accept(server_sock, (struct sockaddr_in *) &Caddress, &clen)) < 0) {
+        if ((client_sock = accept(server_sock, (struct sockaddr *) &Caddress, &clen)) < 0) {
             perror("Accept failed.\n");
             exit(EXIT_FAILURE);
         }
