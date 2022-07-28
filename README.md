@@ -1,6 +1,8 @@
 # httpProxy
 
-This repository was part of the assignment 1 in CS3103 (Autumn 2021) in NUS.
+*This repository was part of the assignment 1 in CS3103 (Autumn 2021) in NUS.*
+
+A http/https proxy that supports multi-threading, https tunneling, telemetry and blacklisting, written in C.
 
 ## Program Design
 ### proxy implementation
