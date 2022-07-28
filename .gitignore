@@ -3,7 +3,5 @@ proxy
 trashed/
 .DS_Store
 playground/
-micro_proxy-master
 .vscode/
 .vscode/settings.json
-micro_proxy-master/micro_proxy.c
