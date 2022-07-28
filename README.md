@@ -1,4 +1,4 @@
-# CS3103-AS1
+# httpProxy
 
 This repository was part of the assignment 1 in CS3103 (Autumn 2021) in NUS.
 
